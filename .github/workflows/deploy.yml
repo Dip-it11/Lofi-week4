@@ -1,0 +1,65 @@
+# Builds the static site and publishes it to GitHub Pages on every push to main.
+# One-time setup: repo Settings → Pages → Build and deployment → Source: "GitHub Actions".
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Works whether the project sits at the repo root or inside one sub-folder.
+      - name: Find project folder
+        id: app
+        run: |
+          DIR=$(dirname "$(find . -name package.json -not -path '*/node_modules/*' | awk '{ print length, $0 }' | sort -n | head -1 | cut -d' ' -f2-)")
+          echo "Project folder: $DIR"
+          ls -la "$DIR"
+          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+
+      - name: Install
+        working-directory: ${{ steps.app.outputs.dir }}
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Build
+        working-directory: ${{ steps.app.outputs.dir }}
+        run: |
+          REPO="${{ github.event.repository.name }}"
+          # <user>.github.io repos are served from the root; every other repo from /<repo>/
+          if [[ "$REPO" == *.github.io ]]; then BASE=""; else BASE="/$REPO"; fi
+          echo "Base path: '$BASE'"
+          NEXT_PUBLIC_BASE_PATH="$BASE" npm run build
+          touch out/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.app.outputs.dir }}/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
